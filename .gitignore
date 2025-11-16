@@ -1,0 +1,9 @@
+#PyCharm
+.idea/
+
+#venv
+.venv/
+*.iml
+*.pyc
+__pycache__/
+script.py
