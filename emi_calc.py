@@ -3,93 +3,110 @@ import pandas as pd
 import numpy as np
 
 
+def calculate_emi_value(principal: float, rate: float, tenure_years: int) -> float:
+    """Calculates the monthly EMI."""
+    monthly_rate = (rate / 100) / 12
+    num_payments = tenure_years * 12
+    
+    if monthly_rate > 0:
+        return (principal * monthly_rate * (1 + monthly_rate) ** num_payments) / (
+                ((1 + monthly_rate) ** num_payments) - 1)
+    else:
+        return principal / num_payments
+
+
+def calculate_tenure_value(principal: float, rate: float, emi: float) -> float:
+    """Calculates the number of months required to pay off the loan."""
+    monthly_rate = (rate / 100) / 12
+    
+    if monthly_rate <= 0:
+        return principal / emi
+        
+    if emi <= (principal * monthly_rate):
+        raise ValueError("The entered EMI is too low to cover the monthly interest.")
+
+    # Formula: N = log(EMI / (EMI - P*R)) / log(1+R)
+    log_numerator = np.log(emi / (emi - principal * monthly_rate))
+    log_denominator = np.log(1 + monthly_rate)
+    return log_numerator / log_denominator
+
+
+def generate_amortization_schedule(principal: float, rate: float, emi: float, num_payments: int) -> tuple[pd.DataFrame, float]:
+    """Generates the amortization schedule and total interest."""
+    monthly_rate = (rate / 100) / 12
+    schedule = []
+    remaining_balance = principal
+    total_interest = 0.0
+    num_payments_rounded = int(np.ceil(num_payments))
+
+    for month in range(1, num_payments_rounded + 1):
+        interest_paid = remaining_balance * monthly_rate
+        principal_paid = min(emi - interest_paid, remaining_balance)
+
+        if principal_paid < 0:
+             # Should not happen if EMI > Interest, but safe guard
+            principal_paid = emi 
+
+        remaining_balance -= principal_paid
+
+        # Stop if balance is nearly zero
+        if remaining_balance <= 0.01:
+            remaining_balance = 0
+
+        schedule.append({
+            "Month": month,
+            "EMI": f"{emi:,.2f}",
+            "Principal Paid": f"{principal_paid:,.2f}",
+            "Interest Paid": f"{interest_paid:,.2f}",
+            "Remaining Balance": f"{max(remaining_balance, 0):,.2f}"
+        })
+
+        total_interest += interest_paid
+
+        if remaining_balance == 0:
+            break
+            
+    return pd.DataFrame(schedule), total_interest
+
+
 def calculate_emi_or_tenure(calculation_type, principal, rate, tenure=None, emi=None):
     """
-    Calculates either EMI or loan tenure and generates an amortization schedule.
-
-    Args:
-        calculation_type (str): 'Calculate EMI' or 'Calculate Tenure'.
-        principal (float): The loan amount.
-        rate (float): The annual interest rate (e.g., 8.5 for 8.5%).
-        tenure (int, optional): The loan tenure in years. Used for EMI calculation.
-        emi (float, optional): The fixed monthly installment. Used for tenure calculation.
-
-    Returns:
-        tuple: A tuple containing a formatted string with the result and the amortization schedule as a pandas DataFrame.
+    Main handler for EMI or Tenure calculation.
     """
     try:
-        # Convert annual rate to monthly rate
-        monthly_rate = (rate / 100) / 12
+        if principal <= 0 or rate < 0:
+             return "Error: Principal must be positive and Rate cannot be negative.", pd.DataFrame()
+
         emi_output = ""
+        calculated_emi = 0.0
+        num_payments = 0.0
 
         if calculation_type == 'Calculate EMI':
+            if not tenure or tenure <= 0:
+                 return "Error: Please enter a valid tenure.", pd.DataFrame()
+            
+            calculated_emi = calculate_emi_value(principal, rate, tenure)
             num_payments = tenure * 12
-            if monthly_rate > 0:
-                calculated_emi = (principal * monthly_rate * (1 + monthly_rate) ** num_payments) / (
-                            ((1 + monthly_rate) ** num_payments) - 1)
-            else:
-                calculated_emi = principal / num_payments
             emi_output = f"Your Monthly EMI: ₹{calculated_emi:,.2f}"
 
         elif calculation_type == 'Calculate Tenure':
-            if emi is None or emi <= 0:
+            if not emi or emi <= 0:
                 return "Please enter a valid EMI amount to calculate tenure.", pd.DataFrame()
-            if monthly_rate <= 0:
-                num_payments = principal / emi
-                emi_output = f"Your loan will be closed in: {num_payments:,.0f} months"
-                calculated_emi = emi
-            else:
-                if emi <= (principal * monthly_rate):
-                    return "The entered EMI is too low to cover the monthly interest. Please increase the EMI.", pd.DataFrame()
-
-                # Formula to calculate number of payments (n) from EMI
-                # EMI = [P x R x (1+R)^N] / [(1+R)^N-1]
-                # Derived from this: N = log(EMI / (EMI - P*R)) / log(1+R)
-                log_numerator = np.log(emi / (emi - principal * monthly_rate))
-                log_denominator = np.log(1 + monthly_rate)
-                num_payments = log_numerator / log_denominator
-
-                emi_output = f"Your loan will be closed in: {num_payments:,.0f} months ({num_payments / 12:.1f} years)"
-                calculated_emi = emi
+            
+            try:
+                num_payments = calculate_tenure_value(principal, rate, emi)
+            except ValueError as e:
+                return str(e), pd.DataFrame()
+                
+            calculated_emi = emi
+            emi_output = f"Your loan will be closed in: {num_payments:,.0f} months ({num_payments / 12:.1f} years)"
 
         else:
             return "Invalid calculation type.", pd.DataFrame()
 
-        # Generate the amortization schedule
-        schedule = []
-        remaining_balance = principal
-        num_payments_rounded = int(np.ceil(num_payments))
-
-        total_interest = 0.0
-
-        for month in range(1, num_payments_rounded + 1):
-            interest_paid = remaining_balance * monthly_rate
-            principal_paid = min(calculated_emi - interest_paid, remaining_balance)
-
-            if principal_paid < 0:
-                principal_paid = calculated_emi  # To handle final payment correctly if it's less than interest
-
-            remaining_balance -= principal_paid
-
-            # Stop if balance is nearly zero to avoid floating point issues
-            if remaining_balance <= 0.01:
-                remaining_balance = 0
-
-            schedule.append({
-                "Month": month,
-                "EMI": f"{calculated_emi:,.2f}",
-                "Principal Paid": f"{principal_paid:,.2f}",
-                "Interest Paid": f"{interest_paid:,.2f}",
-                "Remaining Balance": f"{max(remaining_balance, 0):,.2f}"
-            })
-
-            total_interest += interest_paid
-
-            if remaining_balance == 0:
-                break
-
-        df_schedule = pd.DataFrame(schedule)
-        emi_output = emi_output + "\n" + f"Total Interest Payment is : {total_interest:,.0f}"
+        # Generate schedule
+        df_schedule, total_interest = generate_amortization_schedule(principal, rate, calculated_emi, num_payments)
+        emi_output += f"\nTotal Interest Payment is : {total_interest:,.0f}"
 
         return emi_output, df_schedule
 
@@ -115,7 +132,7 @@ with gr.Blocks(title="EMI and Amortization Calculator") as demo:
 
     # Conditional inputs based on calculation type
     with gr.Row() as emi_row:
-        tenure = gr.Slider(label="Tenure (Years)", minimum=1, maximum=20, step=1, value=5)
+        tenure = gr.Slider(label="Tenure (Years)", minimum=1, maximum=30, step=1, value=5)
 
     with gr.Row(visible=False) as tenure_row:
         fixed_emi = gr.Number(label="Fixed Monthly EMI (₹)")
@@ -124,9 +141,9 @@ with gr.Blocks(title="EMI and Amortization Calculator") as demo:
     # Event listeners for conditional visibility
     def toggle_inputs(calc_type):
         if calc_type == "Calculate EMI":
-            return gr.Row(visible=True), gr.Row(visible=False)
+            return gr.update(visible=True), gr.update(visible=False)
         else:
-            return gr.Row(visible=False), gr.Row(visible=True)
+            return gr.update(visible=False), gr.update(visible=True)
 
 
     calculation_type.change(toggle_inputs, calculation_type, [emi_row, tenure_row])
